@@ -1,0 +1,18 @@
+{
+  "name": "inventory-management/app",
+  "description": "CELCO Material Inventory Management System",
+  "type": "project",
+  "require": {
+    "php": "^8.2",
+    "ext-bcmath": "*",
+    "ext-fileinfo": "*",
+    "ext-pdo": "*",
+    "ext-pdo_mysql": "*",
+    "dompdf/dompdf": "^3.1",
+    "phpoffice/phpspreadsheet": "^5.0"
+  },
+  "config": {
+    "allow-plugins": false,
+    "sort-packages": true
+  }
+}

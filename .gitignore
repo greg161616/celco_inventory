@@ -1,0 +1,8 @@
+.env
+/config/db.php
+/vendor/
+/storage/logs/*
+/storage/exports/*
+/storage/uploads/*
+!/storage/**/.htaccess
+

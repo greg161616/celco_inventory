@@ -1,0 +1,1 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Access denied | CELCO IMS</title><main><h1>Access denied</h1><p>Your account does not have permission to perform this action.</p><a href="<?= e(app_url()) ?>">Return to workspace</a></main></html>
