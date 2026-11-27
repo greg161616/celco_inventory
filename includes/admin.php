@@ -18,6 +18,18 @@ function save_account(array $input,?int $id): int {
         audit($old?'USER_UPDATE':'USER_CREATE','users',$id,['before'=>$old,'after'=>$data,'password_changed'=>isset($values['password_hash'])]);return $id;
     });
 }
+function create_initial_admin(string $username,string $password,string $action='WEB_ADMIN_SETUP'): int {
+    $username=string_value($username,80);
+    $password=password_value($password);
+    return atomic(function()use($username,$password,$action){
+        $role=id_value(scalar("SELECT id FROM roles WHERE code='ADMIN' FOR UPDATE"));
+        ensure(!scalar('SELECT u.id FROM users u WHERE u.role_id=? AND u.is_active=1 LIMIT 1',[$role]),'An active administrator already exists.');
+        run_sql('INSERT INTO users(role_id,username,password_hash) VALUES(?,?,?)',[$role,$username,password_hash($password,PASSWORD_DEFAULT)]);
+        $id=inserted_id();
+        audit($action,'users',$id,['username'=>$username],$id);
+        return $id;
+    });
+}
 function save_role(array $input,?int $id): int {
     return atomic(function()use($input,$id){
         $admin=(int)scalar("SELECT id FROM roles WHERE code='ADMIN' FOR UPDATE");

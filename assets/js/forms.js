@@ -28,6 +28,17 @@
     if(!response.ok || !body.success) throw Error(body.message || 'Search unavailable.');
     return body.data;
   }
+  const prefill = JSON.parse(form.dataset.linesPrefill || '[]');
+  prefill.forEach((item,index) => {
+    if(index) form.querySelector('[data-add-line]').click();
+    const line=lines.lastElementChild;
+    for(const element of line.querySelectorAll('[name]')){
+      const key=element.name.match(/\[([^\]]+)\]$/)?.[1];
+      if(!key || !(key in item)) continue;
+      if(key==='material_id' && ![...element.options].some(o=>o.value===String(item[key]))) element.add(new Option(item.material,item[key]));
+      element.value=item[key] ?? '';
+    }
+  });
   async function loadRequest() {
     if (!form.dataset.requestId) return;
     const response = await fetch(form.dataset.requestUrl + '?id=' + encodeURIComponent(form.dataset.requestId));

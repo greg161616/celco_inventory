@@ -13,8 +13,8 @@ function layout_sidebar(string $module, array $navigation): void
 <aside class="sidebar" id="workspace-menu" aria-label="Main navigation">
     <div class="sidebar-brand">
         <a class="brand-lockup" href="<?= e(app_url('index.php')) ?>" aria-label="CELCO IMS home">
-            <img src="<?= e(app_url('assets/image/CELCO.png')) ?>" width="42" height="40" alt="">
-            <span><strong>CELCO IMS</strong><small>Material inventory</small></span>
+            <img src="<?= e(app_url('api/logo.php')) ?>" width="42" height="40" alt="">
+            <span><strong>CELCO</strong><small>Material inventory</small></span>
         </a>
         <button class="icon-button mobile-close" type="button" data-menu-close aria-label="Close navigation"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
     </div>

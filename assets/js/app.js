@@ -275,6 +275,24 @@
     }
 
     window.CelcoUI = Object.freeze({fetchJSON, toast});
+    document.addEventListener('change',async event=>{
+        const department=event.target;
+        if(department.name!=='department_id') return;
+        const form=department.form;
+        if(!form || (!form.elements.project_id && !form.elements.recipient_employee_id)) return;
+        const selectedDepartment=department.value;
+        try {
+            const directory=await fetchJSON(workspace.dataset.baseUrl+'/api/directory.php?department_id='+encodeURIComponent(selectedDepartment));
+            if(department.value!==selectedDepartment) return;
+            for(const [name,records] of Object.entries(directory)){
+                const select=form.elements[name];
+                if(!(select instanceof HTMLSelectElement)) continue;
+                const old=select.value;
+                select.replaceChildren(new Option('Select…',''),...records.map(r=>new Option(r.label,r.id)));
+                if(records.some(r=>String(r.id)===old)) select.value=old;
+            }
+        } catch(error){toast(error.message,'danger');}
+    });
     initMenu();
     initForms();
     initNotifications();

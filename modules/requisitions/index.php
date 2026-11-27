@@ -13,8 +13,9 @@ if($r){
     page_link($base,'All requests');print_button();echo '<section class="panel"><h2>'.e($r['request_no']).'</h2><p>'.e(implode(' · ',array_filter([$r['status'],$r['department'],$r['requester'],$r['warehouse'],$r['project']]))).'</p><p>'.e($r['purpose']).'</p></section>';
     $lines=request_lines($id);table_html(['material'=>'Material','unit'=>'Unit','available'=>'Available now','requested_qty'=>'Requested','approved_qty'=>'Approved','issued_qty'=>'Issued','remaining_qty'=>'Remaining'],$lines);
     echo '<form method="post" class="panel no-print">'.csrf_field();
-    if($actor==$r['requested_by'] && can('requisition.create')){if($r['status']==='DRAFT')button_action('submit','Submit for review');if(in_array($r['status'],['DRAFT','SUBMITTED'],true))button_action('cancel','Cancel request',true);}
-    if($actor!=$r['requested_by'] && can('requisition.approve') && $r['status']==='SUBMITTED'){
+    $entryUser=scalar("SELECT user_id FROM audit_logs WHERE entity_type='requisitions' AND entity_id=? AND action='REQUEST_CREATE' ORDER BY id LIMIT 1",[$id]);
+    if(($actor==$r['requested_by']||($actor==$entryUser && can('users.manage'))) && can('requisition.create')){if($r['status']==='DRAFT')button_action('submit','Submit for review');if(in_array($r['status'],['DRAFT','SUBMITTED'],true))button_action('cancel','Cancel request',true);}
+    if($actor!=$r['requested_by'] && $actor!=$entryUser && can('requisition.approve') && $r['status']==='SUBMITTED'){
         foreach($lines as $l)field('approved['.$l['requisition_item_id'].']',$l['material'].' · approve ('.$l['unit'].')',$l['requested_qty']);
         field('remarks','Decision remarks','','textarea');button_action('approve','Approve quantities',true);button_action('reject','Reject request',true);
     }echo '</form>';
@@ -22,6 +23,10 @@ if($r){
     echo '<h2>Decision history</h2>';table_html(['decided_at'=>'Time','username'=>'Reviewer','decision'=>'Decision','remarks'=>'Remarks'],rows('SELECT a.decided_at,u.username,a.decision,a.remarks FROM requisition_approvals a JOIN users u ON u.id=a.decided_by WHERE requisition_id=? ORDER BY a.id',[$id]));
 } elseif(isset($_GET['new'])) {
     require_permission('requisition.create');echo '<form class="panel" method="post" data-lines-form data-lookup="'.e(app_url('api/lookup.php')).'">'.csrf_field().submission_field('REQ').'<p>Requester · '.e($user['username']).'</p><div class="form-grid">';
+    if(can('users.manage')){
+        $options=array_column(rows("SELECT u.id,u.username FROM users u WHERE u.is_active=1 AND EXISTS(SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=u.role_id AND p.code='requisition.create') ORDER BY u.username"),'username','id');
+        field('requested_by','Requester',$actor,'select',$options,true);
+    }
     field('department_id','Department',$user['department_id'],'select',options_for('departments'),true);field('warehouse_id','Warehouse',setting('default_warehouse'),'select',options_for('warehouses'),true);field('project_id','Project','','select',options_for('projects'));field('purpose','Purpose','','textarea',[],true);echo '</div><div data-lines><fieldset class="panel" data-line><legend>Requested material</legend><div class="form-grid">';
     material_picker('lines[0][material_id]');field('lines[0][quantity]','Requested quantity','','text',[],true);field('lines[0][remarks]','Remarks');echo '</div><div data-stock-info></div><button type="button" class="btn btn-light" data-remove-line>Remove line</button></fieldset></div><button type="button" class="btn btn-light" data-add-line>Add material</button> ';button_action('create','Save request');echo '</form><script defer src="'.e(app_url('assets/js/forms.js')).'"></script>';
 } else {

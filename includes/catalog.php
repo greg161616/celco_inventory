@@ -39,7 +39,11 @@ function catalog_save(string $table,array $input,?int $id=null): int {
         $names=array_keys($data);
         if($id){run_sql("UPDATE $table SET ".implode('=?,',$names).'=? WHERE id=?',[...array_values($data),$id]);}
         else {run_sql("INSERT INTO $table (".implode(',',$names).') VALUES ('.implode(',',array_fill(0,count($names),'?')).')',array_values($data));$id=inserted_id();}
-        audit($old?'UPDATE':'CREATE',$table,$id,['before'=>$old,'after'=>$data]);return $id;
+        audit($old?'UPDATE':'CREATE',$table,$id,['before'=>$old,'after'=>$data]);
+        if($table==='materials' && $data['is_active']){
+            require_once __DIR__.'/notifications.php';
+            notify_stock([$id]);
+        }
+        return $id;
     });
 }
-

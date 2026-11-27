@@ -17,10 +17,18 @@ if($c){
     if($c['adjustment_document_id'])echo '<p>Adjustment '.e(scalar('SELECT document_no FROM stock_documents WHERE id=?',[$c['adjustment_document_id']])).'</p>';
     $form=$c['counted_by']==$actor && $c['status']==='COUNTING' && can('stock_count.manage') && !isset($_GET['print']);
     $lines=rows("SELECT i.*,m.name,m.is_serialized,u.code unit,(i.counted_qty-i.system_qty) variance,(SELECT GROUP_CONCAT(s.serial_number ORDER BY s.id SEPARATOR '\n') FROM material_serials s JOIN stock_count_item_serials x ON x.serial_id=s.id WHERE x.stock_count_item_id=i.id) serials FROM stock_count_items i JOIN materials m ON m.id=i.material_id JOIN units u ON u.id=m.unit_id WHERE stock_count_id=? ORDER BY m.name,i.stock_condition".(isset($_GET['print'])?'':page_limit()),[$id]);
+    $snapshot=json_decode((string)scalar("SELECT details FROM audit_logs WHERE action='COUNT_SNAPSHOT' AND entity_type='stock_counts' AND entity_id=? ORDER BY id DESC LIMIT 1",[$id]),true)??[];
+    foreach($lines as &$countLine){
+        $expected=$snapshot['expected_serials'][$countLine['id']]??[];
+        $observed=serial_names($countLine['serials']??'');
+        $countLine['missing']=$countLine['counted_qty']===null?'':implode(', ',array_udiff($expected,$observed,'strcasecmp'));
+        $countLine['unexpected']=implode(', ',array_udiff($observed,$expected,'strcasecmp'));
+    }unset($countLine);
     echo '</section>';if($form){echo '<form method="post" class="panel">'.csrf_field();foreach($lines as $line){$key='items['.$line['id'].']';echo '<fieldset><legend>'.e($line['name'].' · '.$line['stock_condition'].' · '.$line['system_qty'].' '.$line['unit']).'</legend><div class="form-grid">';field($key.'[quantity]','Counted quantity',$line['counted_qty']);if($line['is_serialized'])field($key.'[serials]','Observed serials',$line['serials'],'textarea');field($key.'[remarks]','Discrepancy explanation',$line['remarks']);echo '</div></fieldset>';}button_action('save','Save this page');echo '</form>';}
-    else table_html(['name'=>'Material','stock_condition'=>'Condition','unit'=>'Unit','system_qty'=>'Snapshot','counted_qty'=>'Counted','variance'=>'Discrepancy','serials'=>'Observed serials','remarks'=>'Explanation'],$lines);
+    else table_html(['name'=>'Material','stock_condition'=>'Condition','unit'=>'Unit','system_qty'=>'Snapshot','counted_qty'=>'Counted','variance'=>'Discrepancy','serials'=>'Observed serials','missing'=>'Missing serials','unexpected'=>'Unexpected serials','remarks'=>'Explanation'],$lines);
     if(!isset($_GET['print']))pager((int)scalar('SELECT COUNT(*) FROM stock_count_items WHERE stock_count_id=?',[$id]));
     echo '<form method="post" class="no-print">'.csrf_field();if($form)button_action('submit','Submit count for review',true);
+    if($c['status']==='REVIEWED' && $c['counted_by']==$actor && can('stock_count.manage'))button_action('reopen','Reopen for corrections',true);
     if($c['status']==='REVIEWED' && $c['counted_by']!=$actor && can('stock_count.approve'))button_action('approve','Approve and post discrepancies',true);
     if(in_array($c['status'],['COUNTING','REVIEWED'],true)&&($c['counted_by']==$actor || can('stock_count.approve')))button_action('cancel','Cancel counting session',true);echo '</form>';
 }else{

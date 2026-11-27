@@ -12,6 +12,7 @@ $base = 'modules/reports/index.php';
 $params = ['report' => $slug];
 $where = [];
 $bindings = [];
+$captions = [];
 $selectors = [
     'material_id' => ['Material', 'materials', "CONCAT(material_code, ' · ', name)"],
     'category_id' => ['Category', 'categories', 'name'],
@@ -37,6 +38,7 @@ foreach ($report['filters'] as $key => $expression) {
                 $params[$bound] = date_value($_GET[$bound]);
                 $where[] = $expression . ($bound === 'from' ? ' >= ?' : ' < DATE_ADD(?, INTERVAL 1 DAY)');
                 $bindings[] = $params[$bound];
+                $captions[] = ($bound === 'from' ? 'From ' : 'Through ') . $params[$bound];
             }
         }
         if (isset($params['from'], $params['to'])) {
@@ -44,6 +46,14 @@ foreach ($report['filters'] as $key => $expression) {
         }
     } elseif (($_GET[$key] ?? '') !== '') {
         $params[$key] = isset($selectors[$key]) ? id_value($_GET[$key]) : choice($_GET[$key], $enums[$key][1]);
+        if (isset($selectors[$key])) {
+            [$label,$table,$column] = $selectors[$key];
+            $text = scalar("SELECT $column FROM $table WHERE id=?", [$params[$key]]);
+            ensure($text !== false, 'The selected report filter no longer exists.');
+            $captions[] = $label . ' ' . $text;
+        } else {
+            $captions[] = $enums[$key][0] . ' ' . $params[$key];
+        }
         $alternatives = [];
         foreach ((array) $expression as $column) {
             $alternatives[] = "$column = ?";
@@ -57,7 +67,11 @@ $ordered = $sql . ' ORDER BY ' . $report['order'];
 $format = choice($_GET['format'] ?? 'html', ['html','print','csv','xlsx','pdf']);
 $metadata = ['company'=>setting('company_name','Camotes Electric Cooperative, Inc.'),
     'generated_by'=>$actor['full_name'] ?: $actor['username'], 'generated_at'=>date('Y-m-d H:i T'),
-    'note'=>$report['note'], 'footer'=>setting('report_footer','')];
+    'note'=>$report['note'], 'footer'=>trim(implode(' · ',array_filter([setting('report_footer',''), setting('report_signatories','Prepared by · Reviewed by')]))), 'address'=>setting('company_address',''),
+    'filters'=>implode(' · ', $captions), 'signatories'=>[]];
+foreach (preg_split('/[·;|\r\n]+/u', setting('report_signatories','Prepared by · Reviewed by')) as $label) {
+    if (trim($label) !== '') $metadata['signatories'][] = trim($label) . ' ____________________';
+}
 
 // Page data and quantity totals refer to a single stock snapshot even during posting.
 db()->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
@@ -141,6 +155,8 @@ if ($report['filters']) {
 }
 echo '</div><section class="panel"><p>' . e($metadata['company']) . '</p><h2>' . e($report['title']) . '</h2><p>Generated '
     . e($metadata['generated_at']) . ' by ' . e($metadata['generated_by']) . '</p>';
+if ($metadata['address'] !== '') echo '<p>' . e($metadata['address']) . '</p>';
+if ($metadata['filters'] !== '') echo '<p>' . e($metadata['filters']) . '</p>';
 if ($report['note']) {
     echo '<p>' . e($report['note']) . '</p>';
 }
@@ -165,5 +181,8 @@ if ($totals) {
 }
 if ($metadata['footer'] !== '') {
     echo '<p>' . e($metadata['footer']) . '</p>';
+}
+if ($format === 'print') {
+    foreach ($metadata['signatories'] as $line) echo '<p>' . e($line) . '</p>';
 }
 layout_end();

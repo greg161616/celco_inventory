@@ -38,6 +38,12 @@ function app_url(string $path=''): string {
     }
     return rtrim('/'.trim($base,'/'),'/').'/'.ltrim($path,'/');
 }
+function currency_choices(): array {
+    return ['PHP'=>'Philippine peso (₱)','USD'=>'US dollar ($)','EUR'=>'Euro (€)','GBP'=>'British pound (£)','JPY'=>'Japanese yen (¥)'];
+}
+function currency_symbol(string $currency): string {
+    return match($currency){'PHP'=>'₱','USD'=>'$','EUR'=>'€','GBP'=>'£','JPY'=>'¥',default=>$currency};
+}
 function e(mixed $value): string { return htmlspecialchars((string)($value ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function redirect_to(string $path): never { header('Location: '.app_url($path), true,303); exit; }
 function is_api(): bool { return str_contains($_SERVER['SCRIPT_NAME'] ?? '', '/api/'); }

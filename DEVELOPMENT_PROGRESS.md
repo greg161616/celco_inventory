@@ -13,3 +13,7 @@
 
 Implementation is in progress. CELCO must supply its administrator credentials, valuation policy and production hosting configuration. No operational migration is proposed.
 
+## First administrator setup
+
+The one-time web setup is at `auth/setup-admin.php`. It only accepts registration while there is no active administrator and requires `CELCO_ADMIN_SETUP_TOKEN` to be set in the web server environment as exactly 64 lowercase hexadecimal characters. Generate a token with `php -r "echo bin2hex(random_bytes(32)), PHP_EOL;"`, configure it in Apache (for XAMPP, add `SetEnv CELCO_ADMIN_SETUP_TOKEN "your-generated-token"` to `apache/conf/httpd.conf`), and restart Apache. Enter the token in the setup form; do not put it in the URL or commit it. The route returns 404 after an active administrator is created. The CLI setup remains available through `php cli/create-admin.php`.
+

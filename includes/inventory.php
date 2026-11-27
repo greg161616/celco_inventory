@@ -39,11 +39,19 @@ function insert_record(string $table,array $data): int {
     run_sql("INSERT INTO $table (".implode(',',array_keys($data)).') VALUES ('.implode(',',array_fill(0,count($data),'?')).')',array_values($data));
     return inserted_id();
 }
-function save_document(string $type,array $header,array $lines,int $actor,string $number,bool $countAdjustment=false): int {
+function draft_version(int $id): string {
+    $header=row('SELECT * FROM stock_documents WHERE id=?',[$id]);
+    $lines=rows('SELECT * FROM stock_document_lines WHERE document_id=? ORDER BY id',[$id]);
+    $serials=rows('SELECT x.document_line_id,x.serial_id FROM stock_document_line_serials x JOIN stock_document_lines l ON l.id=x.document_line_id WHERE l.document_id=? ORDER BY x.id',[$id]);
+    return hash('sha256',serialize([$header,$lines,$serials]));
+}
+function save_document(string $type,array $header,array $lines,int $actor,string $number,bool $countAdjustment=false,?int $editId=null): int {
     ensure(isset(DOCUMENT_PERMISSIONS[$type]) && $type!=='REVERSAL','Invalid transaction type.');
-    return atomic(function()use($type,$header,$lines,$actor,$number,$countAdjustment){
+    return atomic(function()use($type,$header,$lines,$actor,$number,$countAdjustment,$editId){
         if($existing=row('SELECT id,created_by,document_type FROM stock_documents WHERE document_no=? FOR UPDATE',[$number])){
-            ensure($existing['created_by']==$actor && $existing['document_type']===$type,'Document number already used.');return (int)$existing['id'];
+            ensure($existing['created_by']==$actor && $existing['document_type']===$type,'Document number already used.');if(!$editId)return (int)$existing['id'];
+            ensure($existing['id']==$editId && scalar('SELECT status FROM stock_documents WHERE id=?',[$editId])==='DRAFT','Only your own draft can be edited.');
+            ensure(hash_equals(draft_version($editId),(string)($header['version']??'')),'This draft changed. Reload before editing.');
         }
         ensure(count($lines)>0 && (count($lines)<=150 || ($countAdjustment && $type==='ADJUSTMENT')),'Add between one and 150 material lines.');
         $employee=active_ref('employees',$header['recipient_employee_id']??null,in_array($type,['ISSUE','RETURN'],true));
@@ -51,7 +59,13 @@ function save_document(string $type,array $header,array $lines,int $actor,string
         $project=active_ref('projects',$header['project_id']??null,false);
         if($employee && $department)ensure(scalar('SELECT department_id FROM employees WHERE id=?',[$employee])==$department,'Employee belongs to another department.');
         if($project && $department){$dep=scalar('SELECT department_id FROM projects WHERE id=?',[$project]);ensure(!$dep||$dep==$department,'Project belongs to another department.');}
-        $id=insert_record('stock_documents',['document_no'=>string_value($number,50),'document_type'=>$type,'document_date'=>date_value($header['document_date']??''),'created_by'=>$actor,'supplier_id'=>active_ref('suppliers',$header['supplier_id']??null,false),'recipient_employee_id'=>$employee,'department_id'=>$department,'project_id'=>$project,'external_reference'=>string_value($header['external_reference']??'',100,false),'remarks'=>string_value($header['remarks']??'',6000,in_array($type,['RETURN','DISPOSAL','ISSUE','ADJUSTMENT'],true))]);
+        $data=['document_no'=>string_value($number,50),'document_type'=>$type,'document_date'=>date_value($header['document_date']??''),'created_by'=>$actor,'supplier_id'=>active_ref('suppliers',$header['supplier_id']??null,false),'recipient_employee_id'=>$employee,'department_id'=>$department,'project_id'=>$project,'external_reference'=>string_value($header['external_reference']??'',100,false),'remarks'=>string_value($header['remarks']??'',6000,in_array($type,['RETURN','DISPOSAL','ISSUE','ADJUSTMENT'],true))];
+        if($editId){
+            ensure(isset($existing['id']),'Draft not found.');$id=$editId;
+            run_sql('UPDATE stock_documents SET '.implode('=?,',array_keys($data)).'=? WHERE id=?',[...array_values($data),$id]);
+            run_sql('DELETE x FROM stock_document_line_serials x JOIN stock_document_lines l ON l.id=x.document_line_id WHERE l.document_id=?',[$id]);
+            run_sql('DELETE FROM stock_document_lines WHERE document_id=?',[$id]);
+        }else $id=insert_record('stock_documents',$data);
         $used=[];$requestId=null;
         foreach($lines as $input){
             $line=document_line($type,$input);
@@ -71,7 +85,7 @@ function save_document(string $type,array $header,array $lines,int $actor,string
             }
         }
         if($requestId) ensure(!scalar('SELECT COUNT(*) FROM stock_document_lines WHERE document_id=? AND requisition_item_id IS NULL',[$id]),'Use separate documents for direct and requisition issues.');
-        audit('DRAFT_'.$type,'stock_documents',$id);return $id;
+        audit(($editId?'EDIT_':'DRAFT_').$type,'stock_documents',$id);return $id;
     });
 }
 function stock_snapshot(int $stockId): array {
@@ -170,7 +184,8 @@ function post_document(int $id,int $actor,?string $expectedType=null): void {
         run_sql("UPDATE stock_documents SET status='POSTED',posted_by=?,posted_at=NOW(),approved_by=IF(document_type='DISPOSAL',?,approved_by) WHERE id=?",[$actor,$actor,$id]);
         foreach(array_unique($requests) as $request)refresh_fulfillment($request);
         audit('POST_'.$type,'stock_documents',$id,['number'=>$doc['document_no']]);
-        if(function_exists('notify_stock'))notify_stock(array_unique(array_column($lines,'material_id')));
+        require_once __DIR__.'/notifications.php';
+        notify_stock(array_unique(array_column($lines,'material_id')));
     });
 }
 function reverse_document(int $id,int $actor,string $reason,?string $expectedType=null): int {
@@ -182,7 +197,7 @@ function reverse_document(int $id,int $actor,string $reason,?string $expectedTyp
         $lines=rows('SELECT * FROM stock_document_lines WHERE document_id=? ORDER BY id DESC',[$id]);
         lock_rows('warehouses',[...array_column($lines,'from_warehouse_id'),...array_column($lines,'to_warehouse_id')]);
         // Conservatively reverse in ledger order so later consumption or serial movements cannot be invalidated.
-        ensure(!scalar('SELECT 1 FROM stock_document_lines l JOIN stock_movements v ON v.document_line_id=l.id JOIN stock_movements later ON later.stock_id=v.stock_id AND later.id>v.id JOIN stock_document_lines ll ON ll.id=later.document_line_id WHERE l.document_id=? AND ll.document_id<>? LIMIT 1',[$id,$id]),'Later movements exist at this stock location. Review dependent transactions.');
+        ensure(!scalar('SELECT 1 FROM stock_document_lines l JOIN stock_movements v ON v.document_line_id=l.id JOIN stock_movements later ON later.stock_id=v.stock_id AND later.id>v.id JOIN stock_document_lines ll ON ll.id=later.document_line_id JOIN stock_documents ld ON ld.id=ll.document_id WHERE l.document_id=? AND ll.document_id<>? AND ld.document_type<>\'REVERSAL\' AND NOT EXISTS(SELECT 1 FROM stock_documents undo WHERE undo.reverses_document_id=ld.id AND undo.status=\'POSTED\') LIMIT 1',[$id,$id]),'Later movements exist at this stock location. Review dependent transactions.');
         ensure(!scalar("SELECT 1 FROM stock_document_lines src JOIN stock_document_lines child ON child.return_of_line_id=src.id JOIN stock_documents d ON d.id=child.document_id WHERE src.document_id=? AND d.status='POSTED' AND NOT EXISTS(SELECT 1 FROM stock_documents r WHERE r.reverses_document_id=d.id AND r.status='POSTED') LIMIT 1",[$id]),'An outstanding return depends on this issue.');
         $new=insert_record('stock_documents',['document_no'=>doc_number('REVERSAL'),'document_type'=>'REVERSAL','document_date'=>date('Y-m-d'),'created_by'=>$actor,'reverses_document_id'=>$id,'remarks'=>string_value($reason,6000)]);
         $requests=[];foreach($lines as $l){

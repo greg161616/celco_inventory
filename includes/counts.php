@@ -15,7 +15,9 @@ function open_count(array $input,int $actor,string $number): int {
               WHERE m.is_active=1 OR s.quantity>0";
         foreach(CONDITIONS as $condition)run_sql($sql,[$id,$condition,$condition,$w]);
         ensure((bool)scalar('SELECT id FROM stock_count_items WHERE stock_count_id=? LIMIT 1',[$id]),'Add materials before starting a count.');
-        audit('COUNT_SNAPSHOT','stock_counts',$id,['warehouse_id'=>$w,'movement_id'=>warehouse_watermark($w)]);
+        $expected=[];
+        foreach(rows('SELECT i.id item_id,s.serial_number FROM stock_count_items i JOIN material_serials s ON s.material_id=i.material_id AND s.stock_condition=i.stock_condition WHERE i.stock_count_id=? AND s.warehouse_id=? ORDER BY s.id',[$id,$w]) as $serial)$expected[$serial['item_id']][]=$serial['serial_number'];
+        audit('COUNT_SNAPSHOT','stock_counts',$id,['warehouse_id'=>$w,'movement_id'=>warehouse_watermark($w),'expected_serials'=>$expected]);
         return $id;
     });
 }
@@ -26,7 +28,12 @@ function record_count_items(int $id,int $actor,array $values): void {
             if(($input['quantity']??'')==='')continue;
             $line=row('SELECT i.id,i.material_id,i.system_qty,m.is_serialized FROM stock_count_items i JOIN materials m ON m.id=i.material_id WHERE i.id=? AND i.stock_count_id=?',[$item,$id]);ensure((bool)$line,'Invalid count line.');
             $qty=decimal_value($input['quantity']);$names=serial_names($input['serials']??'');ensure($line['is_serialized'] ? bccomp($qty,(string)count($names),3)===0 : !$names,'Enter every observed serial for the counted quantity.');
-            $remarks=string_value($input['remarks']??'',255,bccomp($qty,$line['system_qty'],3)!==0);
+            $needsRemark=bccomp($qty,$line['system_qty'],3)!==0;
+            if($line['is_serialized']){
+                $expected=rows("SELECT s.serial_number FROM material_serials s JOIN stock_counts c ON c.warehouse_id=s.warehouse_id JOIN stock_count_items i ON i.stock_count_id=c.id AND i.material_id=s.material_id AND i.stock_condition=s.stock_condition WHERE i.id=? AND s.state='IN_STOCK'",[$item]);
+                $needsRemark=$needsRemark || (bool)array_diff(array_map('mb_strtolower',array_column($expected,'serial_number')),array_map('mb_strtolower',$names));
+            }
+            $remarks=string_value($input['remarks']??'',255,$needsRemark);
             run_sql('UPDATE stock_count_items SET counted_qty=?,remarks=? WHERE id=?',[$qty,$remarks,$item]);
             run_sql('DELETE FROM stock_count_item_serials WHERE stock_count_item_id=?',[$item]);
             foreach($names as $name){
@@ -44,6 +51,10 @@ function count_transition(int $id,string $action,int $actor): void {
         if($action==='cancel'){
             ensure(($actor==$c['counted_by']||can('stock_count.approve')) && in_array($c['status'],['COUNTING','REVIEWED'],true),'Count cannot be cancelled.');
             run_sql("UPDATE stock_counts SET status='CANCELLED' WHERE id=?",[$id]);audit('COUNT_CANCEL','stock_counts',$id);return;
+        }
+        if($action==='reopen'){
+            ensure(can('stock_count.manage') && $actor==$c['counted_by'] && $c['status']==='REVIEWED','Only the assigned counter may reopen a count awaiting approval.');
+            run_sql("UPDATE stock_counts SET status='COUNTING' WHERE id=?",[$id]);audit('COUNT_REOPEN','stock_counts',$id);return;
         }
         if($action==='submit'){
             ensure(can('stock_count.manage') && $actor==$c['counted_by'] && $c['status']==='COUNTING','Only the counter may submit an open count.');
@@ -80,4 +91,3 @@ function count_transition(int $id,string $action,int $actor): void {
         run_sql("UPDATE stock_counts SET status='POSTED',approved_by=?,adjustment_document_id=? WHERE id=?",[$actor,$doc,$id]);audit('COUNT_APPROVE','stock_counts',$id,['adjustment_document_id'=>$doc]);
     });
 }
-

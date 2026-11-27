@@ -2,6 +2,17 @@
 declare(strict_types=1);
 require_once __DIR__.'/inventory.php';require_once APP_ROOT.'/includes/requisitions.php';require_once APP_ROOT.'/includes/counts.php';require_once APP_ROOT.'/includes/admin.php';
 $f=inventory_fixture();$actor=$f['actor'];$reviewer=$f['reviewer'];$wire=$f['wire'];$a=$f['a'];
+db()->beginTransaction();
+try {
+    $adminRole=(int)scalar("SELECT id FROM roles WHERE code='ADMIN'");
+    run_sql('UPDATE users SET is_active=0 WHERE role_id=?',[$adminRole]);
+    $setupName='setup-'.$f['tag'];$setupPassword=bin2hex(random_bytes(12));
+    $setupId=create_initial_admin($setupName,$setupPassword);
+    checked(password_verify($setupPassword,(string)scalar('SELECT password_hash FROM users WHERE id=?',[$setupId])),'initial administrator password is hashed');
+    expect_inventory_rejection(fn()=>create_initial_admin('second-'.$f['tag'],$setupPassword),'active administrator','initial administrator setup is one-time');
+} finally {
+    db()->rollBack();
+}
 function act_as(int $actor): void {$_SESSION['user_id']=$actor;$_SESSION['credential_version']=hash('sha256',scalar('SELECT password_hash FROM users WHERE id=?',[$actor]));}
 $input=['department_id'=>$f['department'],'warehouse_id'=>$a,'purpose'=>'Repair distribution line'];
 $receive=inventory_draft($f,'RECEIPT',[inventory_line($wire,'12',null,$a)]);post_document($receive,$actor);
